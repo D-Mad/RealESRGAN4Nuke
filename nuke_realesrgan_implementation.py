@@ -1,19 +1,28 @@
 """File for converting the pretrained Real-ESRGAN model into a torchscript file."""
 import torch
+from typing import Optional
 from modified_rrdbnet_arch import RRDBNet
 from basicsr.utils.download_util import load_file_from_url
 from torch import nn
 
 
-def _get_model_state_dict() -> dict:
+def _get_model_state_dict(weights_path: Optional[str] = None) -> dict:
     """Get the pretrained state dict.
 
-    Returns:
-        State dict for the x4plus training.
-    """
-    model_url = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
+    Args:
+        weights_path: Optional path to custom RealESRGAN weights. If ``None``
+            the official x4plus weights will be downloaded and used.
 
-    model_path = load_file_from_url(url=model_url)
+    Returns:
+        State dict for the selected checkpoint.
+    """
+    if weights_path is None:
+        model_url = (
+            "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
+        )
+        model_path = load_file_from_url(url=model_url)
+    else:
+        model_path = weights_path
     loadnet = torch.load(model_path, map_location=torch.device("cpu"))
 
     # prefer to use params_ema
@@ -27,15 +36,17 @@ def _get_model_state_dict() -> dict:
 class TiledREALESRGAN(nn.Module):
     """Wrapper to convert the RealESRGAN model to a nuke compatible torchscript file."""
 
-    def __init__(self, tile_size: int = 200, overlap: int = 10):
+    def __init__(self, tile_size: int = 200, overlap: int = 10, scale: int = 4, weights_path: Optional[str] = None):
         """Initialize the Tiled RealESRGAN.
 
         Args:
             tile_size: size in pixels for the side length of the square tiles.
             overlap: overlapping in pixels between the tiles. This is useful to hide the edges between the tiles.
+            scale: upscaling factor of the model. Supported values depend on the provided weights.
+            weights_path: optional path to custom model weights.
         """
         super().__init__()
-        self.scale = 4
+        self.scale = scale
         model = RRDBNet(
             num_in_ch=3,
             num_out_ch=3,
@@ -44,7 +55,7 @@ class TiledREALESRGAN(nn.Module):
             num_grow_ch=32,
             scale=self.scale,
         )
-        model.load_state_dict(_get_model_state_dict(), strict=True)
+        model.load_state_dict(_get_model_state_dict(weights_path), strict=True)
         model.eval()
         self.model = model
         self.tile_size = tile_size
@@ -125,9 +136,12 @@ class TiledREALESRGAN(nn.Module):
 
 
 def main():
-    model = TiledREALESRGAN()
+    """Example for exporting a TorchScript model."""
+    # create a model with the desired upscale factor
+    scale = 4
+    model = TiledREALESRGAN(scale=scale)
     module = torch.jit.script(model)
-    module.save("output/realesrgan_tiled_v2.pt")
+    module.save(f"output/realesrgan_tiled_x{scale}.pt")
 
 
 if __name__ == "__main__":
